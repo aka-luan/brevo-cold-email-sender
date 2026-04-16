@@ -6,6 +6,7 @@ import os
 import random
 import time
 
+from apify_loader import load_apify_csv
 from campaign.brevo_client import send_transactional_email
 from campaign.templates import get_template, render_template
 from db import get_pending_leads, update_lead_status
@@ -30,7 +31,21 @@ def _mask_email(email: str) -> str:
 
 def run_campaign(daily_limit: int = 30, dry_run: bool = False) -> None:
     """Executa a campanha de email frio para leads pendentes."""
-    leads = get_pending_leads(daily_limit)
+    # Load from Apify CSV if APIFY_CSV_PATH env var is set, otherwise load from database
+    csv_path = os.getenv("APIFY_CSV_PATH")
+    if csv_path:
+        leads = load_apify_csv(csv_path)
+        # Normalize CSV fields to sender expectations
+        for lead in leads:
+            # Map keyword to nicho for template selection (fallback to comercio)
+            lead.setdefault("nicho", lead.get("keyword", "comercio"))
+            # Derive nome from email if not present
+            if "nome" not in lead or not lead["nome"]:
+                email = lead.get("email", "")
+                lead["nome"] = email.split("@")[0] if email else ""
+    else:
+        leads = get_pending_leads(daily_limit)
+    
     enviados = 0
     erros = 0
 
@@ -63,10 +78,14 @@ def run_campaign(daily_limit: int = 30, dry_run: bool = False) -> None:
                 body=rendered["body"],
             )
             if ok:
-                update_lead_status(int(lead["id"]), "enviado")
+                # Only update DB status if lead has an ID (database leads only, not CSV)
+                if "id" in lead:
+                    update_lead_status(int(lead["id"]), "enviado")
                 enviados += 1
             else:
-                update_lead_status(int(lead["id"]), "erro")
+                # Only update DB status if lead has an ID (database leads only, not CSV)
+                if "id" in lead:
+                    update_lead_status(int(lead["id"]), "erro")
                 erros += 1
 
         time.sleep(_sleep_interval())
