@@ -21,6 +21,8 @@ LOG_FILE = LOG_DIR / "campaign.log"
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 SENDER_NAME = os.getenv("SENDER_NAME", "")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
+REPLY_TO_EMAIL = os.getenv("REPLY_TO_EMAIL", "luan.alves.developer@gmail.com")
+REPLY_TO_NAME = os.getenv("REPLY_TO_NAME", SENDER_NAME or SENDER_EMAIL)
 
 
 def _ensure_log_dir() -> None:
@@ -46,11 +48,19 @@ def send_transactional_email(to_email: str, to_name: str, subject: str, body: st
 
     try:
         api_instance = TransactionalEmailsApi(ApiClient(configuration))
+        payload_kwargs = {
+            "to": [{"email": to_email, "name": to_name or to_email}],
+            "sender": {"email": SENDER_EMAIL, "name": SENDER_NAME or SENDER_EMAIL},
+            "subject": subject,
+            "text_content": body,
+        }
+        if REPLY_TO_EMAIL:
+            payload_kwargs["reply_to"] = {
+                "email": REPLY_TO_EMAIL,
+                "name": REPLY_TO_NAME or REPLY_TO_EMAIL,
+            }
         payload = SendSmtpEmail(
-            to=[{"email": to_email, "name": to_name or to_email}],
-            sender={"email": SENDER_EMAIL, "name": SENDER_NAME or SENDER_EMAIL},
-            subject=subject,
-            text_content=body,
+            **payload_kwargs
         )
         api_instance.send_transac_email(payload)
         _write_log(to_email, subject, "enviado")
