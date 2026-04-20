@@ -91,6 +91,7 @@ def run_campaign(daily_limit: int = 30, dry_run: bool = False) -> None:
                 to_name=lead.get("nome") or email,
                 subject=rendered["subject"],
                 body=rendered["body"],
+                html_body=rendered.get("html_body"),
             )
             if ok:
                 update_lead_status(int(lead["id"]), "enviado")

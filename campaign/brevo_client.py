@@ -36,7 +36,13 @@ def _write_log(to_email: str, subject: str, result: str) -> None:
         handle.write(f"[{timestamp}] | [{to_email}] | [{subject}] | [{result}]\n")
 
 
-def send_transactional_email(to_email: str, to_name: str, subject: str, body: str) -> bool:
+def send_transactional_email(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+) -> bool:
     _ensure_log_dir()
 
     if not BREVO_API_KEY or not SENDER_EMAIL:
@@ -54,6 +60,8 @@ def send_transactional_email(to_email: str, to_name: str, subject: str, body: st
             "subject": subject,
             "text_content": body,
         }
+        if html_body:
+            payload_kwargs["html_content"] = html_body
         if REPLY_TO_EMAIL:
             payload_kwargs["reply_to"] = {
                 "email": REPLY_TO_EMAIL,
