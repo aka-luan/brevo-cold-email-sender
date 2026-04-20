@@ -70,7 +70,7 @@ def _is_valid_email(email: str) -> bool:
         email: Email address to validate
         
     Returns:
-        True if email matches pattern \S+@\S+\.\S+
+        True if email matches pattern ``\\S+@\\S+\\.\\S+``
     """
     pattern = r"\S+@\S+\.\S+"
     return bool(re.match(pattern, email))

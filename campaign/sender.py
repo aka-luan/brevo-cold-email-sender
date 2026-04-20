@@ -9,7 +9,7 @@ import time
 from apify_loader import load_apify_csv
 from campaign.brevo_client import send_transactional_email
 from campaign.templates import get_template, render_template
-from db import get_pending_leads, update_lead_status
+from db import get_pending_leads, sync_csv_leads, update_lead_status
 
 
 def _sleep_interval() -> float:
@@ -29,20 +29,35 @@ def _mask_email(email: str) -> str:
     return f"{masked_local}@{domain}"
 
 
+def _normalize_csv_lead(lead: dict[str, str]) -> dict[str, str]:
+    normalized = dict(lead)
+
+    email = (normalized.get("email") or "").strip()
+    normalized["email"] = email
+    normalized["nicho"] = (
+        normalized.get("nicho")
+        or normalized.get("keyword")
+        or "comercio"
+    )
+    normalized["nome"] = (
+        normalized.get("nome")
+        or normalized.get("title")
+        or (email.split("@")[0] if email else "")
+    )
+    normalized["site"] = normalized.get("site") or normalized.get("url") or ""
+    normalized["fonte"] = normalized.get("fonte") or "Apify CSV"
+
+    return normalized
+
+
 def run_campaign(daily_limit: int = 30, dry_run: bool = False) -> None:
     """Executa a campanha de email frio para leads pendentes."""
-    # Load from Apify CSV if APIFY_CSV_PATH env var is set, otherwise load from database
     csv_path = os.getenv("APIFY_CSV_PATH")
     if csv_path:
-        leads = load_apify_csv(csv_path)
-        # Normalize CSV fields to sender expectations
-        for lead in leads:
-            # Map keyword to nicho for template selection (fallback to comercio)
-            lead.setdefault("nicho", lead.get("keyword", "comercio"))
-            # Derive nome from email if not present
-            if "nome" not in lead or not lead["nome"]:
-                email = lead.get("email", "")
-                lead["nome"] = email.split("@")[0] if email else ""
+        leads = sync_csv_leads(
+            [_normalize_csv_lead(lead) for lead in load_apify_csv(csv_path)],
+            daily_limit,
+        )
     else:
         leads = get_pending_leads(daily_limit)
     
@@ -78,14 +93,10 @@ def run_campaign(daily_limit: int = 30, dry_run: bool = False) -> None:
                 body=rendered["body"],
             )
             if ok:
-                # Only update DB status if lead has an ID (database leads only, not CSV)
-                if "id" in lead:
-                    update_lead_status(int(lead["id"]), "enviado")
+                update_lead_status(int(lead["id"]), "enviado")
                 enviados += 1
             else:
-                # Only update DB status if lead has an ID (database leads only, not CSV)
-                if "id" in lead:
-                    update_lead_status(int(lead["id"]), "erro")
+                update_lead_status(int(lead["id"]), "erro")
                 erros += 1
 
         time.sleep(_sleep_interval())

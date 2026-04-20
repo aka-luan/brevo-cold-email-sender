@@ -164,6 +164,161 @@ def insert_lead(lead: dict[str, Any]) -> bool:
         return True
 
 
+def _normalize_text(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _find_existing_lead_row(
+    connection: sqlite3.Connection, lead: dict[str, Any]
+) -> sqlite3.Row | None:
+    email = _normalize_text(lead.get("email"))
+    nome = _normalize_text(lead.get("nome"))
+    telefone = _normalize_text(lead.get("telefone"))
+
+    if email is not None:
+        row = connection.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE LOWER(TRIM(COALESCE(email, ''))) = LOWER(?)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (email,),
+        ).fetchone()
+        if row is not None:
+            return row
+
+    if nome is None:
+        return None
+
+    return connection.execute(
+        f"""
+        SELECT *
+        FROM {TABLE_NAME}
+        WHERE nome = ?
+          AND (
+                (telefone = ?)
+                OR (telefone IS NULL AND ? IS NULL)
+              )
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (nome, telefone, telefone),
+    ).fetchone()
+
+
+def upsert_lead(lead: dict[str, Any]) -> dict[str, Any]:
+    """Insere ou atualiza um lead e devolve a linha persistida."""
+    init_db()
+
+    nome = _normalize_text(lead.get("nome"))
+    nicho = _normalize_text(lead.get("nicho"))
+    fonte = _normalize_text(lead.get("fonte"))
+
+    if not nome or not nicho or not fonte:
+        raise ValueError("Lead precisa conter nome, nicho e fonte.")
+
+    payload = {
+        "nome": nome,
+        "nicho": nicho,
+        "telefone": _normalize_text(lead.get("telefone")),
+        "email": _normalize_text(lead.get("email")),
+        "site": _normalize_text(lead.get("site")),
+        "instagram": _normalize_text(lead.get("instagram")),
+        "fonte": fonte,
+        "cidade": _normalize_text(lead.get("cidade")) or "Belém",
+    }
+
+    with get_connection() as connection:
+        existing = _find_existing_lead_row(connection, payload)
+
+        if existing is None:
+            cursor = connection.execute(
+                f"""
+                INSERT INTO {TABLE_NAME} (
+                    nome, nicho, telefone, email, site, instagram, fonte, cidade
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["nome"],
+                    payload["nicho"],
+                    payload["telefone"],
+                    payload["email"],
+                    payload["site"],
+                    payload["instagram"],
+                    payload["fonte"],
+                    payload["cidade"],
+                ),
+            )
+            lead_id = int(cursor.lastrowid)
+        else:
+            lead_id = int(existing["id"])
+            connection.execute(
+                f"""
+                UPDATE {TABLE_NAME}
+                SET nome = ?,
+                    nicho = ?,
+                    telefone = ?,
+                    email = ?,
+                    site = ?,
+                    instagram = ?,
+                    fonte = ?,
+                    cidade = ?
+                WHERE id = ?
+                """,
+                (
+                    payload["nome"],
+                    payload["nicho"],
+                    payload["telefone"],
+                    payload["email"],
+                    payload["site"],
+                    payload["instagram"],
+                    payload["fonte"],
+                    payload["cidade"],
+                    lead_id,
+                ),
+            )
+
+        connection.commit()
+        row = connection.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+
+    persisted = _row_to_dict(row)
+    if persisted is None:
+        raise RuntimeError("Falha ao persistir lead no banco.")
+    return persisted
+
+
+def sync_csv_leads(leads: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """
+    Persiste leads vindos de CSV e devolve apenas os pendentes para envio.
+    """
+    pending_leads: list[dict[str, Any]] = []
+
+    for lead in leads:
+        persisted = upsert_lead(lead)
+        email = _normalize_text(persisted.get("email"))
+        if persisted.get("status_email") != "pendente" or email is None:
+            continue
+
+        pending_leads.append(persisted)
+        if len(pending_leads) >= limit:
+            break
+
+    return pending_leads
+
+
 def get_hot_leads() -> list[dict[str, Any]]:
     init_db()
 
